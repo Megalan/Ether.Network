@@ -7,6 +7,7 @@ using Ether.Network.Utils;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -67,14 +68,6 @@ namespace Ether.Network
             this._manualResetEvent = new ManualResetEvent(false);
             this._autoSendEvent = new AutoResetEvent(false);
             this._sendQueueTask = new Task(this.ProcessSendQueue);
-        }
-
-        /// <summary>
-        /// Destroys the <see cref="NetServer{T}"/> instance.
-        /// </summary>
-        ~NetServer()
-        {
-            this.Dispose(false);
         }
 
         /// <summary>
@@ -190,6 +183,7 @@ namespace Ether.Network
                             Socket = e.AcceptSocket
                         };
                         client.SendAction = this.SendMessageAction;
+                        client.Token.Socket = client.Socket;
                         client.Token.MessageHandler = messageData => this.HandleIncomingMessages(client, messageData);
 
                         if (!this._clients.TryAdd(client.Id, client))
@@ -279,15 +273,76 @@ namespace Ether.Network
                 var connection = e.UserToken as NetUser;
                 IAsyncUserToken token = connection.Token;
 
-                token.TotalReceivedDataSize = token.NextReceiveOffset - token.DataStartOffset + e.BytesTransferred;
-                SocketAsyncUtils.ProcessReceivedData(e, token, this.PacketProcessor, 0);
-                SocketAsyncUtils.ProcessNextReceive(e, token);
+                int totalReceived = e.BytesTransferred;
 
-                if (!connection.Socket.ReceiveAsync(e))
+                // Read header
+                if (token.MessageSize == null)
+                {
+                    int headerSize = this.PacketProcessor.HeaderSize;
+
+                    if (token.MessageHeaderData != null && token.ReceivedHeaderBytesCount < headerSize)
+                    {
+                        // Read the rest of the header
+                        int restOfHeaderLength = headerSize - token.ReceivedHeaderBytesCount;
+                        byte[] restOfHeader = NetUtils.GetPacketBuffer(e.Buffer, token.DataCursorIndex, restOfHeaderLength);
+
+                        token.MessageHeaderData = token.MessageHeaderData.Concat(restOfHeader).ToArray();
+                        token.ReceivedHeaderBytesCount = token.MessageHeaderData.Length;
+                        token.DataCursorIndex += restOfHeaderLength;
+                    }
+                    else if (totalReceived > token.DataCursorIndex + headerSize)
+                    {
+                        // Read all the header
+                        token.MessageHeaderData = NetUtils.GetPacketBuffer(e.Buffer, token.DataCursorIndex, headerSize);
+                        token.ReceivedHeaderBytesCount = headerSize;
+                        token.DataCursorIndex += headerSize;
+                    }
+                    else
+                    {
+                        // Read only one part of the header
+                        int remainingBytesInThisBuffer = totalReceived - token.DataCursorIndex;
+                        token.MessageHeaderData = NetUtils.GetPacketBuffer(e.Buffer, token.DataCursorIndex, remainingBytesInThisBuffer);
+                        token.ReceivedHeaderBytesCount = token.MessageHeaderData.Length;
+                        token.DataCursorIndex = 0;
+                    }
+
+                    if (token.ReceivedHeaderBytesCount == headerSize)
+                    {
+                        int messageSize = this.PacketProcessor.GetLength(token.MessageHeaderData);
+
+                        Console.WriteLine("Received Message size : {0}", messageSize);
+                        token.MessageHeaderData = null;
+                        token.ReceivedHeaderBytesCount = 0;
+                        token.MessageSize = messageSize - headerSize;
+                    }
+                    else
+                    {
+                        if (!token.Socket.ReceiveAsync(e))
+                            this.ProcessReceive(e);
+                        return;
+                    }
+                }
+
+                // Read content
+                if (token.MessageSize.HasValue)
+                {
+                    int messageSize = token.MessageSize.Value;
+
+                    // TODO
+                }
+
+
+                //token.TotalReceivedDataSize = token.NextReceiveOffset - token.DataStartOffset + e.BytesTransferred;
+                //SocketAsyncUtils.ProcessReceivedData(e, token, this.PacketProcessor, 0);
+                //SocketAsyncUtils.ProcessNextReceive(e, token);
+
+                if (!token.Socket.ReceiveAsync(e))
                     this.ProcessReceive(e);
             }
             else
+            {
                 this.CloseConnection(e);
+            }
         }
 
         /// <summary>
@@ -349,17 +404,18 @@ namespace Ether.Network
         {
             if (!this._isDisposed)
             {
-                this._readPool?.Dispose();
-                this._writePool?.Dispose();
+                if (disposing)
+                {
+                    this._readPool?.Dispose();
+                    this._writePool?.Dispose();
 
-                foreach (var client in this._clients)
-                    client.Value.Dispose();
+                    foreach (var client in this._clients)
+                        client.Value.Dispose();
 
-                this._clients.Clear();
-                this._isDisposed = true;
+                    this._clients.Clear();
+                    this._isDisposed = true;
+                }
             }
-            else
-                throw new ObjectDisposedException(nameof(NetServer<T>));
 
             base.Dispose(disposing);
         }

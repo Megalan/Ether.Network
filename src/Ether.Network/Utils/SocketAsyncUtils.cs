@@ -16,34 +16,44 @@ namespace Ether.Network.Utils
             if (alreadyProcessedDataSize >= token.TotalReceivedDataSize)
                 return;
 
-            if (token.MessageSize == null)
+            try
             {
-                int headerSize = packetProcessor.HeaderSize;
-
-                if (token.TotalReceivedDataSize > headerSize)
+                if (token.MessageSize == null)
                 {
-                    byte[] headerData = NetUtils.GetPacketBuffer(e.Buffer, dataStartOffset, headerSize);
-                    int messageSize = packetProcessor.GetLength(headerData);
+                    int headerSize = packetProcessor.HeaderSize;
 
-                    token.MessageSize = messageSize - headerSize;
-                    token.DataStartOffset = dataStartOffset + headerSize;
+                    if (token.ReceivedHeaderBytesCount == 0)
+                    {
+                    }
 
-                    ProcessReceivedData(e, token, packetProcessor, alreadyProcessedDataSize + headerSize);
+                    if (token.TotalReceivedDataSize > headerSize)
+                    {
+                        byte[] headerData = NetUtils.GetPacketBuffer(e.Buffer, dataStartOffset, headerSize);
+                        int messageSize = packetProcessor.GetLength(headerData);
+
+                        token.MessageSize = messageSize - headerSize;
+                        token.DataStartOffset = dataStartOffset + headerSize;
+
+                        ProcessReceivedData(e, token, packetProcessor, alreadyProcessedDataSize + headerSize);
+                    }
+                }
+                else
+                {
+                    var messageSize = token.MessageSize.Value;
+                    if (token.TotalReceivedDataSize - alreadyProcessedDataSize >= messageSize)
+                    {
+                        byte[] messageData = NetUtils.GetPacketBuffer(e.Buffer, dataStartOffset, messageSize);
+
+                        token.MessageHandler?.Invoke(messageData);
+                        token.DataStartOffset = dataStartOffset + messageSize;
+                        token.MessageSize = null;
+
+                        ProcessReceivedData(e, token, packetProcessor, alreadyProcessedDataSize + messageSize);
+                    }
                 }
             }
-            else
+            catch (Exception ex)
             {
-                var messageSize = token.MessageSize.Value;
-                if (token.TotalReceivedDataSize - alreadyProcessedDataSize >= messageSize)
-                {
-                    byte[] messageData = NetUtils.GetPacketBuffer(e.Buffer, dataStartOffset, messageSize);
-
-                    token.MessageHandler?.Invoke(messageData);
-                    token.DataStartOffset = dataStartOffset + messageSize;
-                    token.MessageSize = null;
-
-                    ProcessReceivedData(e, token, packetProcessor, alreadyProcessedDataSize + messageSize);
-                }
             }
         }
 

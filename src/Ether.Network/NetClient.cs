@@ -81,6 +81,7 @@ namespace Ether.Network
 
             this._sendingQueueWorker.Start();
             this._receivingQueueWorker.Start();
+            this.Token.Socket = this.Socket;
             this.Token.MessageHandler = data => this._receivingQueue.Add(data);
 
             if (!this.Socket.ReceiveAsync(this._socketReceiveArgs))

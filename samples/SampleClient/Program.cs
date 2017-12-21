@@ -13,12 +13,13 @@ namespace SampleClient
 
             Console.WriteLine("Enter a message and press enter...");
             int i = 0;
+            var random = new Random();
 
             try
             {
                 while (true)
                 {
-                    string input = $"{GenerateRandomString(20)} - {i.ToString()}";
+                    string input = /*Console.ReadLine();*/ $"{GenerateRandomString(random.Next(20))} - {i.ToString()}";
 
                     if (input == "quit")
                     {
